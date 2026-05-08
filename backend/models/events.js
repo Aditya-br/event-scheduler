@@ -10,7 +10,7 @@ const eventSchema = new mongoose.Schema({
     ticketsAvailable:{type:Number,required:true},
     totaltickets:{type:Number,required:true},
     eventtype:{type:String,required:true},
-    organisationID:{type:mongoose.Schema.Types.ObjectId,ref:'Organisation',required:true}
+    organisationID:{type:mongoose.Schema.Types.ObjectId,ref:'OrganisationLogin',required:true}
 })
 
 export const Event = mongoose.model('Event',eventSchema)

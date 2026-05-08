@@ -5,10 +5,13 @@
     import { UserLogin } from "./models/userlogin.js";
     import { OrganisationLogin } from "./models/organisationlogin.js";
     import { Event } from "./models/events.js";
+    import { Ticket } from "./models/tickets.js";
     import cors from "cors";
     import dotenv from "dotenv";
     import bcrypt from "bcrypt"
     import main from './chat.js';
+    import crypto from 'crypto'
+    import QRCode from 'qrcode'
 
     dotenv.config();
     const hash = async (password) => {
@@ -65,18 +68,141 @@
     app.post('/getevents', async (req, res) => {
         const { name, type } = req.body
         if (type === "user") {
-            const data = await UserLogin.findOne({ username: name })
-            if (!data) {
-                return res.status(400).json({ message: "User not found" })
-            }
-            return res.status(200).json({ events: data.Events })
+            const events = await Event.find()
+                .populate("organisationID", "organisationname")
+                .sort({ eventDate: -1 })
+            const formattedEvents = events.map((event) => ({
+                ...event.toObject(),
+                organisationname: event.organisationID?.organisationname || "Unknown Organisation",
+            }))
+            return res.status(200).json({ events: formattedEvents })
         }
         else if (type === "organisation") {
             const data = await OrganisationLogin.findOne({ organisationname: name })
             if (!data) {
                 return res.status(400).json({ message: "Organisation not found" })
             }
-            return res.status(200).json({ events: data.eventHistory })
+            const events = await Event.find({ organisationID: data._id })
+                .populate("organisationID", "organisationname")
+                .sort({ eventDate: -1 })
+            const formattedEvents = events.map((event) => ({
+                ...event.toObject(),
+                organisationname: event.organisationID?.organisationname || name,
+            }))
+            return res.status(200).json({ events: formattedEvents })
+        }
+    })
+
+    app.post('/bookEvent', async (req, res) => {
+
+    const { eventId, name } = req.body
+
+    try {
+
+        const user = await UserLogin.findOne({
+            username: name
+        })
+
+        const event = await Event.findOne({
+            eventId: eventId.toString()
+        })
+
+        if (!user || !event) {
+            return res.status(400).json({
+                message: "Invalid user or event"
+            })
+        }
+
+        if (event.ticketsAvailable <= 0) {
+            return res.status(400).json({
+                message: "No tickets available"
+            })
+        }
+
+        const qrToken = crypto
+            .randomBytes(32)
+            .toString('hex')
+
+        const ticketId = crypto
+            .randomBytes(16)
+            .toString('hex')
+
+        const qrData =
+            `https://yourwebsite.com/verify/${qrToken}`
+
+        const qrCodeImage =
+            await QRCode.toDataURL(qrData)
+
+        const newticket = new Ticket({
+            ticketId,
+            eventId: event.eventId,
+            username: user.username,
+            qrToken
+        })
+
+        await newticket.save()
+
+        event.ticketsAvailable -= 1
+
+        user.Events.push(event.eventId)
+
+        await event.save()
+        await user.save()
+
+        return res.status(200).json({
+            message: "Event booked successfully",
+            ticket: newticket,
+            qrCodeImage
+        })
+
+    } catch (err) {
+
+        console.error(err)
+
+        return res.status(500).json({
+            message: "Internal server error"
+        })
+    }
+})
+
+    app.post('/userBookings', async (req, res) => {
+        const { name } = req.body
+        if (!name) {
+            return res.status(400).json({ message: "Username is required" })
+        }
+
+        try {
+            const tickets = await Ticket.find({ username: name }).sort({ bookingDate: -1 })
+            if (!tickets.length) {
+                return res.status(200).json({ bookings: [] })
+            }
+
+            const eventIds = tickets.map((ticket) => ticket.eventId)
+            const events = await Event.find({ eventId: { $in: eventIds } })
+                .populate("organisationID", "organisationname")
+
+            const eventsById = new Map(events.map((event) => [event.eventId, event]))
+
+            const bookings = await Promise.all(tickets.map(async (ticket) => {
+                const event = eventsById.get(ticket.eventId)
+                const qrCodeImage = await QRCode.toDataURL(`https://yourwebsite.com/verify/${ticket.qrToken}`)
+                return {
+                    ticketId: ticket.ticketId,
+                    bookingDate: ticket.bookingDate,
+                    isUsed: ticket.isUsed,
+                    eventId: ticket.eventId,
+                    eventName: event?.eventName || "Unknown Event",
+                    eventDate: event?.eventDate || null,
+                    eventTime: event?.eventTime || "",
+                    organisationname: event?.organisationID?.organisationname || "Unknown Organisation",
+                    qrCodeImage,
+                }
+            }))
+
+            return res.status(200).json({ bookings })
+        } catch (err) {
+            console.error("Error fetching user bookings", err)
+            return res.status(500).json({ message: "Internal server error" })
         }
     })
 
@@ -175,7 +301,4 @@
             }
         }
 
-    })
-    app.listen(port, () => {
-        console.log(`Example app listening on port ${port}`)
     })
