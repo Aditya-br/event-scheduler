@@ -1,5 +1,5 @@
 "use client"
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useSelector } from 'react-redux'
 const stats = [
     {
@@ -22,12 +22,7 @@ const stats = [
         ),
         accent: '#34d399',
         accentBg: 'rgba(52,211,153,0.1)',
-        compute: (events) => events.reduce((a, e) => {
-            const totalTickets = parseInt(e.totalTickets) || 0
-            const ticketsAvailable = parseInt(e.ticketsAvailable) || 0
-            const sold = totalTickets - ticketsAvailable
-            return a + (sold > 0 ? sold : 0)
-        }, 0),
+        compute: (events) => events.reduce((a, e) => a + (parseInt(e.ticketse.totalTickets) || 0), 0),
     },
     {
         label: 'Total Revenue',
@@ -38,13 +33,7 @@ const stats = [
         ),
         accent: '#f59e0b',
         accentBg: 'rgba(245,158,11,0.1)',
-        compute: (events) => `₹${events.reduce((a, e) => {
-            const price = parseInt(e.price) || 0
-            const totalTickets = parseInt(e.totalTickets) || 0
-            const ticketsAvailable = parseInt(e.ticketsAvailable) || 0
-            const sold = totalTickets - ticketsAvailable
-            return a + (sold > 0 ? sold : 0) * price
-        }, 0).toLocaleString()}`,
+        compute: (events) => `₹${events.reduce((a, e) => a + (parseInt(e.price) || 0) * (parseInt(e.totalTickets) || 0), 0).toLocaleString()}`,
     },
     {
         label: 'Active Events',
@@ -65,46 +54,12 @@ const EMPTY_FORM = {
 }
 
 const OrganisationDashboard = () => {
-    const details = useSelector((state) => state.details.organisation)
-    const [fallbackDetails, setFallbackDetails] = useState({ name: "", location: "", type: "" })
+    const details = useSelector((state) => state.details.value)
     const [events, setEvents] = useState([])
-    const [fetchError, setFetchError] = useState("")
     const [showModal, setShowModal] = useState(false)
     const [editingEvent, setEditingEvent] = useState(null)
     const [form, setForm] = useState(EMPTY_FORM)
     const [deleteConfirm, setDeleteConfirm] = useState(null)
-
-    useEffect(() => {
-        if (typeof window === "undefined") return
-        try {
-            const raw = localStorage.getItem("organisationContext")
-            if (!raw) return
-            const parsed = JSON.parse(raw)
-            setFallbackDetails({
-                name: parsed?.name || "",
-                location: parsed?.location || "",
-                type: parsed?.type || "",
-            })
-        } catch {
-            setFallbackDetails({ name: "", location: "", type: "" })
-        }
-    }, [])
-
-    const activeDetails = useMemo(() => ({
-        name: details?.name || fallbackDetails.name,
-        location: details?.location || fallbackDetails.location,
-        type: details?.type || fallbackDetails.type,
-    }), [details, fallbackDetails])
-
-    useEffect(() => {
-        if (typeof window === "undefined") return
-        if (!details?.name) return
-        localStorage.setItem("organisationContext", JSON.stringify({
-            name: details.name,
-            location: details.location,
-            type: details.type,
-        }))
-    }, [details])
 
     const mapBackendEvent = (event) => {
         const eventDate = event.eventDate ? new Date(event.eventDate) : null
@@ -118,44 +73,34 @@ const OrganisationDashboard = () => {
             description: event.eventDescription || '',
             date: eventDate ? eventDate.toISOString().split('T')[0] : '',
             time: event.eventTime || '',
-            location: activeDetails.location || '',
+            location: details.location || '',
             category: event.eventtype || '',
             totalTickets: event.totaltickets?.toString?.() || '',
-            ticketsAvailable: event.ticketsAvailable?.toString?.() || '',
             price: event.ticketPrice?.toString?.() || '',
             status,
         }
     }
 
     const fetchOrganisationEvents = useCallback(async () => {
+        if (!details?.name) return
         try {
-            const fallbackResponse = await fetch('http://localhost:5000/getevents', {
+            const response = await fetch('http://localhost:5000/getevents', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: activeDetails.name,
-                    type: "user",
+                    name: details.name,
+                    type: "organisation",
                 }),
             })
-            if (!fallbackResponse.ok) {
-                setFetchError("Unable to fetch organisation events")
-                return
-            }
-            const fallbackData = await fallbackResponse.json()
-            const allEvents = fallbackData.events || []
-            const normalizedOrgName = (activeDetails.name || "").trim().toLowerCase()
-            const filtered = normalizedOrgName
-                ? allEvents.filter((event) =>
-                    (event.organisationname || "").trim().toLowerCase() === normalizedOrgName
-                )
-                : allEvents
-            setEvents(filtered.map(mapBackendEvent))
-            setFetchError("")
+
+            if (!response.ok) return
+            const data = await response.json()
+            const normalizedEvents = (data.events || []).map(mapBackendEvent)
+            setEvents(normalizedEvents)
         } catch (error) {
             console.error("Error fetching organisation events", error)
-            setFetchError("Unable to connect to backend")
         }
-    }, [activeDetails?.name, activeDetails.location])
+    }, [details?.name, details.location])
 
     useEffect(() => {
         fetchOrganisationEvents()
@@ -185,8 +130,8 @@ const OrganisationDashboard = () => {
                 time: form.time,
                 tickets: form.totalTickets,
                 type: form.category,
-                organisationname: activeDetails.name,
-                organisationlocation: activeDetails.location,
+                organisationname: details.name,
+                organisationlocation: details.location,
             })
         });
         if (response.status === 200) {
@@ -231,16 +176,13 @@ const OrganisationDashboard = () => {
 
 
             <main className="max-w-7xl mx-auto px-6 lg:px-8 py-10">
-                {fetchError && (
-                    <p className="mb-4 text-sm text-red-400">{fetchError}</p>
-                )}
 
                 {/* Header */}
                 <div className="mb-10 flex items-start justify-between">
                     <div>
                         <div className="flex items-center gap-2 mb-3">
                             <span className="w-1.5 h-5 rounded-full" style={{ background: 'linear-gradient(to bottom, #8b5cf6, #6d28d9)' }} />
-                            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">{activeDetails.name}</span>
+                            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">{details.name}</span>
                         </div>
                         <h1 className="text-4xl font-bold text-white mb-1.5" style={{ letterSpacing: '-0.02em' }}>Dashboard</h1>
                         <p className="text-sm text-zinc-500">Create, manage and track your events</p>
